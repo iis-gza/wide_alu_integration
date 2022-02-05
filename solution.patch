@@ -1,0 +1,1915 @@
+diff --git a/Bender.yml b/Bender.yml
+new file mode 100644
+index 0000000..cbe3b1e
+--- /dev/null
++++ b/Bender.yml
+@@ -0,0 +1,14 @@
++package:
++  name: wide_alu
++
++dependencies:
++  register_interface:     { git: "https://github.com/pulp-platform/register_interface.git", version: 0.3.1 }
++
++
++
++sources:
++  - rtl/wide_alu_reg_pkg.sv
++  - rtl/wide_alu_reg_top.sv
++  - wide_alu_pkg.sv
++  - wide_alu.sv
++  - wide_alu_top.sv
+diff --git a/README.md b/README.md
+index 20aab61..6b2b6ca 100644
+--- a/README.md
++++ b/README.md
+@@ -3,30 +3,27 @@ In this exercise you will integrate a new hardware "accelerator" into pulpissimo
+ using reggen. For this purpose we prepared a dummy hw accelerator that performs
+ arithmetic operations on very long data words (256-bits) simultaneously. The
+ module has a non standard interface and must first be wrapped and connected to a
+-register file so we can control it through normal loads and stores from the
++register file so we can control it through normal loads and stores form the
+ core. For that purpose we already prepared register file description file in
+ hjson format usable by reggen. This will allow us to simultaneously generate the
+ register file for our IP wrapper as well a generating documentation and C header
+ files for the hardware abstraction layer (HAL). After wrapping the IP with a
+-pulp compatible interface (we will use an APB plug and some protocol converter
+-from some PULP IP library) we attach it to APB crossbar in pulp_soc and add the
++pulp compatible interface (we will use an AXI plug and some protocol converter
++from some PULP IP library) we attach it to AXI crossbar in pulp_soc and add the
+ appropriate address rules for our peripheral.
+ 
+ Finally, after integating the IP into PULPissimo/pulp_soc we will proceed with
+-writing into the sdk a small driver to interact with the IP using the RISC-V core
+-in PULPissimo.
++writing a small driver to interact with the IP using the RISC-V core in
++PULPissimo.
+ 
+ This exercise is quite complex to solve but it will guide you through all the
+ necessary steps to integrate arbitrary IPs into pulp_soc. Although this
+-particular IP will only contain a register slave port for communication, using the
++particular IP will only contain an AXI slave port for communication, using the
+ knowledge from the previous exercise (memory layout modification) it should not
+ be hard to adapt the flow for IPs that also require master ports to the shared
+ memory.
+ 
+ ## IP Integration
+-
+-### Part 1: generate the IP
+-
+ 1. Familiarize yourself with the module we are going to integrate. Go through
+    the toplevel signals and try to get a rough idea what the wide alu module
+    does. As mentioned before, its taks is to accept two 256-bit operands and
+@@ -34,59 +31,109 @@ memory.
+    and provide a 512-bit result. In addition to that, the wide-alu also allows
+    to program a deacceleartion factor which is just a fancy name for a user
+    configurable delay, how many clock cycles later the result should be availble
+-   (I know... a pretty useless "feature" :smile:).
++   (I know... a pretty useless "feature" :-).
+ 2. Go through the register file descripion `wide_alu.hjson`. Consult the
+    [documention](https://docs.opentitan.org/doc/rm/register_tool/ ) on the
+    opentitan website on the specifics of the reggen hjson format. It is not
+    important to uderstand every detail but debugging will be easier if you have
+    a rough idea what registers are used to map to the different signals of the
+    `wide_alu` module.
+-   > Of course, if you were wrapping your own IP you would have to write this hjson file
+-   yourself.
++   > Of course, if you were wrapping your own IP you would have to write this hjson file yourself
+ 3. Create a new github repository with the files of this directory and add a
+-   `Bender.yml` description file.
++   `src_files.yml` and `ips_list.yml` description file.
+    > We do not have any dependencies to other IPs yet but this will change as soon as we add the wrapper to our IP.
+-   Add the wide_alu dependency to the pulp_soc you are working on.
+-   From the pulpissimo folder do `./bender clone pulp_soc`. This will create the folder
+-   `working_dir/pulp_soc` and generate the Bender.lock which will tell bender to fetch pulp_soc
+-   from the new directory instead than github.  Modify the pulp_soc's Bender.yml. From the pulpissimo folder:
+-   ```
+-   make checkout
+-   make scripts
+-   make build
+-   ```
+-   These three steps will alwasy be needed when modifying the Bender.yml of one of the
+-   repositories in the `working_dir`.  
++   
++   Clone this new repository into the `ips` direcotry of a clean copy of
++   pulpissimo (call `./update_ips` first).
+ 4. We are now going to write a wrapper for our wide_alu ip: In the directory of
+-   your new wide_alu repository, create a new SV module called `wide_alu_top`.
++   your new wide_alu repository, create a new SV module calle `wide_alu_top`.
+    The module should have the following portlist:
+    - clk_i, rst_ni, test_mode_i
+-   - A single register slave port (use the `reg_req_t` and `reg_rsp_t` SystemVerilog struct).
+-     This interface is part of the register_interface IP so you can already add it as a
+-     dependency to your `Bender.yml` (make sure to use the same version as
++   - A single AXI slave port (use the `AXI_BUS.Slave` SystemVerilog Interface).
++     This interface is part of the AXI IP so you can allready add it as a
++     dependency to your `ips_list.yml` (make sure to use the same version as
+      pulp_soc in order to avoid version conflicts).
+-     ```
+-       register_interface:     { git: "https://github.com/pulp-platform/register_interface.git", version: 0.3.1 }
+-     ```
+-    and the following parameters:
+-    ```
+-      #(
+-       parameter type reg_req_t = logic,
+-       parameter type reg_rsp_t = logic
+-       )
+-    ```
++     
++   and the following parameters:
++   ```
++     #(
++      parameter int unsigned AXI_ADDR_WIDTH = 32,
++      localparam int unsigned AXI_DATA_WIDTH = 32,
++      parameter int unsigned AXI_ID_WIDTH = -1,
++      parameter int unsigned AXI_USER_WIDTH = -1
++      )
++   ```
+ 5. Generate the register file using the reggen tool. This exercise directory
+    contains a link to the python tool that was patched by ETH for usage of the
+    "Generic Register Interface Protocol" a much simpler alternative to the
+    TileLink Protocol the lowRISC normally uses for their IPs.
++   
++   Have a look at the generated SystemVerilog package and the portlist of the
++   generated register file.
++6. Since we want to wrap our IP with an AXI interface we need a protocol
++   converter from AXI to the "generic register interface". Luckily such a
++   protocol converter is already availble in the register_interface repository
++   on github. Have a look at the corresponding
++   [module](https://github.com/pulp-platform/register_interface/blob/master/src/axi_to_reg.sv
++   ).
++   
++   Instead of SystemVerilog Interfaces the module uses strcuts for its input and
++   output signals. With all the issues that most EDA tools have, the usage of
++   strcuts in favor of Interfaces is actually encouraged but for this exercise
++   we stick with interfaces for simplicity. If you scroll down to the very
++   bottom of the file you will notice that there is wrapper that acceps
++   interfaces as ports and converts them to structs internally. 
++   
++   Instantiate this protocol converter `axi_to_reg_intf` in your IP. On the
++   input side `in` you will attach the AXI port, for the output port `reg_o` you
++   will have to declare a new wiring signal (actually SystemVerilog interface)
++   of type `REG_BUS`. *Call this interface `axi_to_reg_file`*
++   
++   *Since we just used an IP from the register_inteface repository, don't forget to also add it as a dependency. Also add the following vlog_opts and incdirs to your `src_files.yml`:*
++   
++   ``` 
++     vlog_opts:
++    - -L register_interface_lib
++    
++    incdirs:
++    - ../register_interface/include
++    - ../register_interface/vendor/lowrisc_opentitan/include
+    ```
+-   git submodule --init --recursive
+-   ./register_interface/vendor/lowrisc_opentitan/util/regtool.py -r -t wide_alu.hjson
++7. Unfortunately, the autogenerated register_file does not contain a neat
++   wrapper the converts form SystemVerilog Interface to structs. We thus have to
++   do this step ourself; Use the following snippet to do the conversion:
++   
+    ```
+-   Have a look at the generated SystemVerilog package and the portlist of the
+-   generated register file. Include them in the Bender.yml of your wide_alu IP.
+-
+-6. Declare wiring signals that will connect the register file with the actual wide_alu ip with the following snippet:
++   //Convert the REG_BUS interface to the struct signals used by the autogenerated interface
++    typedef logic [AXI_DATA_WIDTH-1:0] data_t;
++    typedef logic [AXI_ADDR_WIDTH-1:0] addr_t;
++    typedef logic [AXI_DATA_WIDTH/8-1:0] strb_t;
++    `REG_BUS_TYPEDEF_REQ(reg_req_t, addr_t, data_t, strb_t)
++    `REG_BUS_TYPEDEF_RSP(reg_rsp_t, data_t)
++    reg_req_t to_reg_file_req;
++    reg_rsp_t from_reg_file_rsp;
++    `REG_BUS_ASSIGN_TO_REQ(to_reg_file_req, axi_to_reg_file)
++    `REG_BUS_ASSIGN_FROM_RSP(axi_to_reg_file, from_reg_file_rsp)
++   ```
++   
++   This is some macro magic that declares the structs for the "generic register
++   interface protocol" with the correct bitwidth, declares signals of that
++   struct type and assigns the signals of the interface to the struct signals
++   and vice-versa.
++   *You will have to add the following includes to the top of your wrapper file for this to work:*
++   ```
++   `include "register_interface/typedef.svh"
++   `include "register_interface/assign.svh"
++   ```
++   *Don't forget to register the corresponding include directory in your `src_files.yml`*.
++   
++8. Instantiate the generated register file and attach the structs from the
++   protocol converter we just created with the snippet above. Tie the `devmode_i` signal of the register_file to `1'b1`.
++   
++   > Hint: for those not so familiar with macros: The signals are called
++   > `to_reg_file_req` (connects to `reg_req_i`) and `from_reg_file_rsp`
++   > (connects to `reg_rsp_o`).
++9. Declare wiring signals that will connect the register file with the actual wide_alu ip with the following snippet:
+    ```
+    wide_alu_reg2hw_t reg_file_to_ip;
+    wide_alu_hw2reg_t ip_to_reg_file;
+@@ -97,8 +144,7 @@ memory.
+    SystemVerilog Package at the beginning of your module (*Please not at the
+    beginning of the file. Remember what I said about imports into the
+    compilation unit scope!*)
+-   
+-7. Instantiate the wide_alu IP. The two wiring signal structs we just created
++10. Instantiate the wide_alu IP. The two wiring signal structs we just created
+     contain subfields for each register in our hjson and with each of those
+     register fields, they contain fiels for the individual bitfields of our
+     registers. Our last task for the wrapper is to connect those bitfields from
+@@ -129,96 +175,26 @@ memory.
+     > OpenTitan documentaion on the register tool about the difference between
+     > `hwext: True` registers and regular registers to figure out why.
+ 
+-### Part2 : instantiate the IP into pulp_soc
+-
+-8. Commit your changes and add your wide_alu repo as a dependency of `pulp_soc`. In the case you'll find a bug
+-   while integrating your wide_alu_top, you'll be able to work on it with the `./bender clone wide_alu` command
+-   from the pulpissimo repository. As usual, to update your `work` library for questasim you'll need to do:
+-   ```
+-   make checkout
+-   make scripts
+-   make build
+-   ```
+-
+-9. Since we want to plug the IP to the APB crossbar with the same register interface
+-   we will need a protocol converter from APB to the "generic register interface". Luckily such a
+-   protocol converter is already availble in the register_interface repository
+-   on github. Have a look at the corresponding  [module](https://github.com/pulp-platform/register_interface/blob/master/src/apb_to_reg.sv).
+-   We will use this module when inserting the `wide_alu_top` in the `pulp_soc/rtl/soc_peripherals.sv`
+-
+-10. Let's add an APB_SLAVE. Go to `rtl/includes/periph_bus_defines.sv` in pulpissimo and add a slave increasing NB_MASTER from 11 to 12.
+-    Then, add it as in the following address space:
+-    ```
+-    `define WIDE_ALU_START_ADDR      32'h1A12_0000
+-    `define WIDE_ALU_END_ADDR        32'h1A12_0FFF
+-    ```
+-    in `rtl/pulp_soc/periph_bus_wrap.sv` we have the APB crossbar. Let's plug the slave and expose the additional
+-    APB_BUS.Master wide_alu_master interface to the top.
+-    ```
+-    `APB_ASSIGN_MASTER(s_masters[11], wide_alu_master);
+-    assign s_start_addr[11] = `WIDE_ALU_START_ADDR;
+-    assign s_end_addr[11]   = `WIDE_ALU_END_ADDR;
+-    ```
+-    
+-11. In the ` rtl/pulp_soc/soc_peripherals.sv` we will instantiate the `wide_alu_top` and the `apb_to_register` converter.
+-    Unfortunately, the autogenerated register_file does not contain a neat wrapper the converts form SystemVerilog Interface to structs.
+-    We thus have to do this step ourself; Use the following snippet to do the conversion:
+-   
+-   ```
+-   //Convert the REG_BUS interface to the struct signals used by the autogenerated interface
+-    localparam RegAw  = 6;
+-    localparam RegDw  = 32; 
+-    typedef logic [RegAw-1:0]   reg_addr_t;
+-    typedef logic [RegDw-1:0]   reg_data_t;
+-    typedef logic [RegDw/8-1:0] reg_strb_t;   
+-    `REG_BUS_TYPEDEF_REQ(reg_req_t, reg_addr_t, reg_data_t, reg_strb_t)
+-    `REG_BUS_TYPEDEF_RSP(reg_rsp_t, reg_data_t)   
+-    reg_req_t   reg_req;
+-    reg_rsp_t   reg_rsp;
+-    `REG_BUS_ASSIGN_TO_REQ(reg_req,wide_alu_reg_bus)
+-    `REG_BUS_ASSIGN_FROM_RSP(wide_alu_reg_bus,reg_rsp)   
+-
+-    apb_to_reg i_apb_to_wide_alu
+-    (
+-     .clk_i     ( clk_i              ),
+-     .rst_ni    ( rst_ni             ),
+-    
+-     .penable_i ( s_wide_alu.penable ),
+-     .pwrite_i  ( s_wide_alu.pwrite  ),
+-     .paddr_i   ( s_wide_alu.paddr   ),
+-     .psel_i    ( s_wide_alu.psel    ),
+-     .pwdata_i  ( s_wide_alu.pwdata  ),
+-     .prdata_o  ( s_wide_alu.prdata  ),
+-     .pready_o  ( s_wide_alu.pready  ),
+-     .pslverr_o ( s_wide_alu.pslverr ),
+-    
+-     .reg_o     ( wide_alu_reg_bus   )
+-    );
+-   ```
+-   
+-   This is some macro magic that declares the structs for the "generic register
+-   interface protocol" with the correct bitwidth, declares signals of that
+-   struct type and assigns the signals of the interface to the struct signals
+-   and vice-versa.
+-   *You will have to add the following includes to the top of your wrapper file for this to work:*
+-   ```
+-   `include "register_interface/typedef.svh"
+-   `include "register_interface/assign.svh"
+-   ```
+-   *Don't forget to register the corresponding include directory in your `src_files.yml`*.
+-
+-12. Instantiate your wide alu wrapper `wide_alu_top` in the same file.
+-
+-13. Commit your changes to pulp_soc to a new fork (or branch if you already have a fork) of `pulp_soc` and modify the version in `Bender.yml` of pulpissimo. 
+-
+-14. That's all. The ip is now integrated. Update all ips, regenerate the TCL
+-    scripts and try to build pulpissimo with the integrated IP. Check the log
+-    to make sure it actually fetches the ips_list.yml of your `wide_alu`
+-    repository. Get rid of all remaining errors during compilation and makes
+-    sure pulpissimo builds without any errors (some warnings are ok).
+-
+-### Part 3: write the driver and test the RTL
+-
++11. Commit your changes and add your wide_alu repo as a dependency of `pulp_soc`
++ 12. Instantiate your wide alu wrapper `wide_alu_top` in the toplevel of `pulp_soc` (`pulp_soc.sv`).
++ 13. Create a new AXI_BUS SystemVerilog interface instance that will connect your IP wrapper withe the AXI crossbar in soc_interconnect.
++ 14. In the same manner like you already did for the memory layout exercise modify `soc_interconnect_wrap.sv` as follows:
++     - add a new port to `soc_interconnect_wrap.sv` for the AXI connection to the wide alu IP
++     - add a new memory region for the wide alu to `rtl/includes/soc_mem_map.svh`:
++     ```
++     `define SOC_MEM_MAP_WIDE_ALU_START_ADDR   32'h1A40_0000
++     `define SOC_MEM_MAP_WIDE_ALU_END_ADDR     32'h1A40_1000
++     ```
++     - Modify the parameters of `soc_interconnect.sv` within `soc_interconnect_wrap.sv`  and the size of the corresponding Interface Array to contain a third additional AXI slave port. 
++     - Add an additional address rule to the `AXI_CROSS_BAR_RULES`
++     - Make sure not to forget to assign the AXI port you created for the wide_alu to the `axi_slaves` interfaces array (using the `AXI_ASSIGN` Macro in the same manner you already see on lines 145,146)
++ 15. Commit your changes to pulp_soc to a new fork (or branch if you already have a fork) of `pulp_soc` and modify the version in `ips_list.yml` of pulpissimo. 
++ 16. That's all. The ip is now integrated. Update all ips, regenerate the TCL
++     scripts and try to build pulpissimo with the integrated IP. Check the log
++     to make sure it actually fetches the ips_list.yml of your `wide_alu`
++     repository. Get rid of all remaining errors during compilation and makes
++     sure pulpissimo builds without any errors (some warnings are ok).
++## Driver
+ Now that we are done integrating the IP into the HW, lets write a small driver
+ to actually use it without hardcoding register addresses ourselves.
+ 
+diff --git a/rtl/wide_alu_reg_pkg.sv b/rtl/wide_alu_reg_pkg.sv
+new file mode 100644
+index 0000000..0a1fad4
+--- /dev/null
++++ b/rtl/wide_alu_reg_pkg.sv
+@@ -0,0 +1,215 @@
++// Copyright lowRISC contributors.
++// Licensed under the Apache License, Version 2.0, see LICENSE for details.
++// SPDX-License-Identifier: Apache-2.0
++//
++// Register Package auto-generated by `reggen` containing data structure
++
++package wide_alu_reg_pkg;
++
++  // Address widths within the block
++  parameter int BlockAw = 8;
++
++  ////////////////////////////
++  // Typedefs for registers //
++  ////////////////////////////
++
++  typedef struct packed {
++    logic [31:0] q;
++  } wide_alu_reg2hw_op_a_mreg_t;
++
++  typedef struct packed {
++    logic [31:0] q;
++  } wide_alu_reg2hw_op_b_mreg_t;
++
++  typedef struct packed {
++    struct packed {
++      logic        q;
++      logic        qe;
++    } trigger;
++    struct packed {
++      logic        q;
++      logic        qe;
++    } clear_err;
++  } wide_alu_reg2hw_ctrl1_reg_t;
++
++  typedef struct packed {
++    struct packed {
++      logic [2:0]  q;
++      logic        qe;
++    } opsel;
++    struct packed {
++      logic [7:0]  q;
++      logic        qe;
++    } delay;
++  } wide_alu_reg2hw_ctrl2_reg_t;
++
++  typedef struct packed {
++    logic [31:0] d;
++  } wide_alu_hw2reg_result_mreg_t;
++
++  typedef struct packed {
++    struct packed {
++      logic [2:0]  d;
++    } opsel;
++    struct packed {
++      logic [7:0]  d;
++    } delay;
++  } wide_alu_hw2reg_ctrl2_reg_t;
++
++  typedef struct packed {
++    logic [1:0]  d;
++  } wide_alu_hw2reg_status_reg_t;
++
++  // Register -> HW type
++  typedef struct packed {
++    wide_alu_reg2hw_op_a_mreg_t [7:0] op_a; // [528:273]
++    wide_alu_reg2hw_op_b_mreg_t [7:0] op_b; // [272:17]
++    wide_alu_reg2hw_ctrl1_reg_t ctrl1; // [16:13]
++    wide_alu_reg2hw_ctrl2_reg_t ctrl2; // [12:0]
++  } wide_alu_reg2hw_t;
++
++  // HW -> register type
++  typedef struct packed {
++    wide_alu_hw2reg_result_mreg_t [15:0] result; // [524:13]
++    wide_alu_hw2reg_ctrl2_reg_t ctrl2; // [12:2]
++    wide_alu_hw2reg_status_reg_t status; // [1:0]
++  } wide_alu_hw2reg_t;
++
++  // Register offsets
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_A_0_OFFSET = 8'h 0;
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_A_1_OFFSET = 8'h 4;
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_A_2_OFFSET = 8'h 8;
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_A_3_OFFSET = 8'h c;
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_A_4_OFFSET = 8'h 10;
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_A_5_OFFSET = 8'h 14;
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_A_6_OFFSET = 8'h 18;
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_A_7_OFFSET = 8'h 1c;
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_B_0_OFFSET = 8'h 20;
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_B_1_OFFSET = 8'h 24;
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_B_2_OFFSET = 8'h 28;
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_B_3_OFFSET = 8'h 2c;
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_B_4_OFFSET = 8'h 30;
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_B_5_OFFSET = 8'h 34;
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_B_6_OFFSET = 8'h 38;
++  parameter logic [BlockAw-1:0] WIDE_ALU_OP_B_7_OFFSET = 8'h 3c;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_0_OFFSET = 8'h 40;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_1_OFFSET = 8'h 44;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_2_OFFSET = 8'h 48;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_3_OFFSET = 8'h 4c;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_4_OFFSET = 8'h 50;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_5_OFFSET = 8'h 54;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_6_OFFSET = 8'h 58;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_7_OFFSET = 8'h 5c;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_8_OFFSET = 8'h 60;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_9_OFFSET = 8'h 64;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_10_OFFSET = 8'h 68;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_11_OFFSET = 8'h 6c;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_12_OFFSET = 8'h 70;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_13_OFFSET = 8'h 74;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_14_OFFSET = 8'h 78;
++  parameter logic [BlockAw-1:0] WIDE_ALU_RESULT_15_OFFSET = 8'h 7c;
++  parameter logic [BlockAw-1:0] WIDE_ALU_CTRL1_OFFSET = 8'h 80;
++  parameter logic [BlockAw-1:0] WIDE_ALU_CTRL2_OFFSET = 8'h 84;
++  parameter logic [BlockAw-1:0] WIDE_ALU_STATUS_OFFSET = 8'h 88;
++
++  // Reset values for hwext registers and their fields
++  parameter logic [31:0] WIDE_ALU_RESULT_0_RESVAL = 32'h 0;
++  parameter logic [31:0] WIDE_ALU_RESULT_1_RESVAL = 32'h 0;
++  parameter logic [31:0] WIDE_ALU_RESULT_2_RESVAL = 32'h 0;
++  parameter logic [31:0] WIDE_ALU_RESULT_3_RESVAL = 32'h 0;
++  parameter logic [31:0] WIDE_ALU_RESULT_4_RESVAL = 32'h 0;
++  parameter logic [31:0] WIDE_ALU_RESULT_5_RESVAL = 32'h 0;
++  parameter logic [31:0] WIDE_ALU_RESULT_6_RESVAL = 32'h 0;
++  parameter logic [31:0] WIDE_ALU_RESULT_7_RESVAL = 32'h 0;
++  parameter logic [31:0] WIDE_ALU_RESULT_8_RESVAL = 32'h 0;
++  parameter logic [31:0] WIDE_ALU_RESULT_9_RESVAL = 32'h 0;
++  parameter logic [31:0] WIDE_ALU_RESULT_10_RESVAL = 32'h 0;
++  parameter logic [31:0] WIDE_ALU_RESULT_11_RESVAL = 32'h 0;
++  parameter logic [31:0] WIDE_ALU_RESULT_12_RESVAL = 32'h 0;
++  parameter logic [31:0] WIDE_ALU_RESULT_13_RESVAL = 32'h 0;
++  parameter logic [31:0] WIDE_ALU_RESULT_14_RESVAL = 32'h 0;
++  parameter logic [31:0] WIDE_ALU_RESULT_15_RESVAL = 32'h 0;
++  parameter logic [1:0] WIDE_ALU_CTRL1_RESVAL = 2'h 0;
++  parameter logic [23:0] WIDE_ALU_CTRL2_RESVAL = 24'h 0;
++  parameter logic [1:0] WIDE_ALU_STATUS_RESVAL = 2'h 0;
++
++  // Register index
++  typedef enum int {
++    WIDE_ALU_OP_A_0,
++    WIDE_ALU_OP_A_1,
++    WIDE_ALU_OP_A_2,
++    WIDE_ALU_OP_A_3,
++    WIDE_ALU_OP_A_4,
++    WIDE_ALU_OP_A_5,
++    WIDE_ALU_OP_A_6,
++    WIDE_ALU_OP_A_7,
++    WIDE_ALU_OP_B_0,
++    WIDE_ALU_OP_B_1,
++    WIDE_ALU_OP_B_2,
++    WIDE_ALU_OP_B_3,
++    WIDE_ALU_OP_B_4,
++    WIDE_ALU_OP_B_5,
++    WIDE_ALU_OP_B_6,
++    WIDE_ALU_OP_B_7,
++    WIDE_ALU_RESULT_0,
++    WIDE_ALU_RESULT_1,
++    WIDE_ALU_RESULT_2,
++    WIDE_ALU_RESULT_3,
++    WIDE_ALU_RESULT_4,
++    WIDE_ALU_RESULT_5,
++    WIDE_ALU_RESULT_6,
++    WIDE_ALU_RESULT_7,
++    WIDE_ALU_RESULT_8,
++    WIDE_ALU_RESULT_9,
++    WIDE_ALU_RESULT_10,
++    WIDE_ALU_RESULT_11,
++    WIDE_ALU_RESULT_12,
++    WIDE_ALU_RESULT_13,
++    WIDE_ALU_RESULT_14,
++    WIDE_ALU_RESULT_15,
++    WIDE_ALU_CTRL1,
++    WIDE_ALU_CTRL2,
++    WIDE_ALU_STATUS
++  } wide_alu_id_e;
++
++  // Register width information to check illegal writes
++  parameter logic [3:0] WIDE_ALU_PERMIT [35] = '{
++    4'b 1111, // index[ 0] WIDE_ALU_OP_A_0
++    4'b 1111, // index[ 1] WIDE_ALU_OP_A_1
++    4'b 1111, // index[ 2] WIDE_ALU_OP_A_2
++    4'b 1111, // index[ 3] WIDE_ALU_OP_A_3
++    4'b 1111, // index[ 4] WIDE_ALU_OP_A_4
++    4'b 1111, // index[ 5] WIDE_ALU_OP_A_5
++    4'b 1111, // index[ 6] WIDE_ALU_OP_A_6
++    4'b 1111, // index[ 7] WIDE_ALU_OP_A_7
++    4'b 1111, // index[ 8] WIDE_ALU_OP_B_0
++    4'b 1111, // index[ 9] WIDE_ALU_OP_B_1
++    4'b 1111, // index[10] WIDE_ALU_OP_B_2
++    4'b 1111, // index[11] WIDE_ALU_OP_B_3
++    4'b 1111, // index[12] WIDE_ALU_OP_B_4
++    4'b 1111, // index[13] WIDE_ALU_OP_B_5
++    4'b 1111, // index[14] WIDE_ALU_OP_B_6
++    4'b 1111, // index[15] WIDE_ALU_OP_B_7
++    4'b 1111, // index[16] WIDE_ALU_RESULT_0
++    4'b 1111, // index[17] WIDE_ALU_RESULT_1
++    4'b 1111, // index[18] WIDE_ALU_RESULT_2
++    4'b 1111, // index[19] WIDE_ALU_RESULT_3
++    4'b 1111, // index[20] WIDE_ALU_RESULT_4
++    4'b 1111, // index[21] WIDE_ALU_RESULT_5
++    4'b 1111, // index[22] WIDE_ALU_RESULT_6
++    4'b 1111, // index[23] WIDE_ALU_RESULT_7
++    4'b 1111, // index[24] WIDE_ALU_RESULT_8
++    4'b 1111, // index[25] WIDE_ALU_RESULT_9
++    4'b 1111, // index[26] WIDE_ALU_RESULT_10
++    4'b 1111, // index[27] WIDE_ALU_RESULT_11
++    4'b 1111, // index[28] WIDE_ALU_RESULT_12
++    4'b 1111, // index[29] WIDE_ALU_RESULT_13
++    4'b 1111, // index[30] WIDE_ALU_RESULT_14
++    4'b 1111, // index[31] WIDE_ALU_RESULT_15
++    4'b 0001, // index[32] WIDE_ALU_CTRL1
++    4'b 0111, // index[33] WIDE_ALU_CTRL2
++    4'b 0001  // index[34] WIDE_ALU_STATUS
++  };
++
++endpackage
++
+diff --git a/rtl/wide_alu_reg_top.sv b/rtl/wide_alu_reg_top.sv
+new file mode 100644
+index 0000000..9f823cf
+--- /dev/null
++++ b/rtl/wide_alu_reg_top.sv
+@@ -0,0 +1,1253 @@
++// Copyright lowRISC contributors.
++// Licensed under the Apache License, Version 2.0, see LICENSE for details.
++// SPDX-License-Identifier: Apache-2.0
++//
++// Register Top module auto-generated by `reggen`
++
++
++`include "common_cells/assertions.svh"
++
++module wide_alu_reg_top #(
++    parameter type reg_req_t = logic,
++    parameter type reg_rsp_t = logic,
++    parameter int AW = 8
++) (
++  input clk_i,
++  input rst_ni,
++  input  reg_req_t reg_req_i,
++  output reg_rsp_t reg_rsp_o,
++  // To HW
++  output wide_alu_reg_pkg::wide_alu_reg2hw_t reg2hw, // Write
++  input  wide_alu_reg_pkg::wide_alu_hw2reg_t hw2reg, // Read
++
++
++  // Config
++  input devmode_i // If 1, explicit error return for unmapped register access
++);
++
++  import wide_alu_reg_pkg::* ;
++
++  localparam int DW = 32;
++  localparam int DBW = DW/8;                    // Byte Width
++
++  // register signals
++  logic           reg_we;
++  logic           reg_re;
++  logic [AW-1:0]  reg_addr;
++  logic [DW-1:0]  reg_wdata;
++  logic [DBW-1:0] reg_be;
++  logic [DW-1:0]  reg_rdata;
++  logic           reg_error;
++
++  logic          addrmiss, wr_err;
++
++  logic [DW-1:0] reg_rdata_next;
++
++  // Below register interface can be changed
++  reg_req_t  reg_intf_req;
++  reg_rsp_t  reg_intf_rsp;
++
++
++  assign reg_intf_req = reg_req_i;
++  assign reg_rsp_o = reg_intf_rsp;
++
++
++  assign reg_we = reg_intf_req.valid & reg_intf_req.write;
++  assign reg_re = reg_intf_req.valid & ~reg_intf_req.write;
++  assign reg_addr = reg_intf_req.addr;
++  assign reg_wdata = reg_intf_req.wdata;
++  assign reg_be = reg_intf_req.wstrb;
++  assign reg_intf_rsp.rdata = reg_rdata;
++  assign reg_intf_rsp.error = reg_error;
++  assign reg_intf_rsp.ready = 1'b1;
++
++  assign reg_rdata = reg_rdata_next ;
++  assign reg_error = (devmode_i & addrmiss) | wr_err;
++
++
++  // Define SW related signals
++  // Format: <reg>_<field>_{wd|we|qs}
++  //        or <reg>_{wd|we|qs} if field == 1 or 0
++  logic [31:0] op_a_0_wd;
++  logic op_a_0_we;
++  logic [31:0] op_a_1_wd;
++  logic op_a_1_we;
++  logic [31:0] op_a_2_wd;
++  logic op_a_2_we;
++  logic [31:0] op_a_3_wd;
++  logic op_a_3_we;
++  logic [31:0] op_a_4_wd;
++  logic op_a_4_we;
++  logic [31:0] op_a_5_wd;
++  logic op_a_5_we;
++  logic [31:0] op_a_6_wd;
++  logic op_a_6_we;
++  logic [31:0] op_a_7_wd;
++  logic op_a_7_we;
++  logic [31:0] op_b_0_wd;
++  logic op_b_0_we;
++  logic [31:0] op_b_1_wd;
++  logic op_b_1_we;
++  logic [31:0] op_b_2_wd;
++  logic op_b_2_we;
++  logic [31:0] op_b_3_wd;
++  logic op_b_3_we;
++  logic [31:0] op_b_4_wd;
++  logic op_b_4_we;
++  logic [31:0] op_b_5_wd;
++  logic op_b_5_we;
++  logic [31:0] op_b_6_wd;
++  logic op_b_6_we;
++  logic [31:0] op_b_7_wd;
++  logic op_b_7_we;
++  logic [31:0] result_0_qs;
++  logic result_0_re;
++  logic [31:0] result_1_qs;
++  logic result_1_re;
++  logic [31:0] result_2_qs;
++  logic result_2_re;
++  logic [31:0] result_3_qs;
++  logic result_3_re;
++  logic [31:0] result_4_qs;
++  logic result_4_re;
++  logic [31:0] result_5_qs;
++  logic result_5_re;
++  logic [31:0] result_6_qs;
++  logic result_6_re;
++  logic [31:0] result_7_qs;
++  logic result_7_re;
++  logic [31:0] result_8_qs;
++  logic result_8_re;
++  logic [31:0] result_9_qs;
++  logic result_9_re;
++  logic [31:0] result_10_qs;
++  logic result_10_re;
++  logic [31:0] result_11_qs;
++  logic result_11_re;
++  logic [31:0] result_12_qs;
++  logic result_12_re;
++  logic [31:0] result_13_qs;
++  logic result_13_re;
++  logic [31:0] result_14_qs;
++  logic result_14_re;
++  logic [31:0] result_15_qs;
++  logic result_15_re;
++  logic ctrl1_trigger_wd;
++  logic ctrl1_trigger_we;
++  logic ctrl1_clear_err_wd;
++  logic ctrl1_clear_err_we;
++  logic [2:0] ctrl2_opsel_qs;
++  logic [2:0] ctrl2_opsel_wd;
++  logic ctrl2_opsel_we;
++  logic ctrl2_opsel_re;
++  logic [7:0] ctrl2_delay_qs;
++  logic [7:0] ctrl2_delay_wd;
++  logic ctrl2_delay_we;
++  logic ctrl2_delay_re;
++  logic [1:0] status_qs;
++  logic status_re;
++
++  // Register instances
++
++  // Subregister 0 of Multireg op_a
++  // R[op_a_0]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_a_0 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_a_0_we),
++    .wd     (op_a_0_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_a[0].q ),
++
++    .qs     ()
++  );
++
++  // Subregister 1 of Multireg op_a
++  // R[op_a_1]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_a_1 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_a_1_we),
++    .wd     (op_a_1_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_a[1].q ),
++
++    .qs     ()
++  );
++
++  // Subregister 2 of Multireg op_a
++  // R[op_a_2]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_a_2 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_a_2_we),
++    .wd     (op_a_2_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_a[2].q ),
++
++    .qs     ()
++  );
++
++  // Subregister 3 of Multireg op_a
++  // R[op_a_3]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_a_3 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_a_3_we),
++    .wd     (op_a_3_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_a[3].q ),
++
++    .qs     ()
++  );
++
++  // Subregister 4 of Multireg op_a
++  // R[op_a_4]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_a_4 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_a_4_we),
++    .wd     (op_a_4_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_a[4].q ),
++
++    .qs     ()
++  );
++
++  // Subregister 5 of Multireg op_a
++  // R[op_a_5]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_a_5 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_a_5_we),
++    .wd     (op_a_5_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_a[5].q ),
++
++    .qs     ()
++  );
++
++  // Subregister 6 of Multireg op_a
++  // R[op_a_6]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_a_6 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_a_6_we),
++    .wd     (op_a_6_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_a[6].q ),
++
++    .qs     ()
++  );
++
++  // Subregister 7 of Multireg op_a
++  // R[op_a_7]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_a_7 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_a_7_we),
++    .wd     (op_a_7_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_a[7].q ),
++
++    .qs     ()
++  );
++
++
++
++  // Subregister 0 of Multireg op_b
++  // R[op_b_0]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_b_0 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_b_0_we),
++    .wd     (op_b_0_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_b[0].q ),
++
++    .qs     ()
++  );
++
++  // Subregister 1 of Multireg op_b
++  // R[op_b_1]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_b_1 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_b_1_we),
++    .wd     (op_b_1_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_b[1].q ),
++
++    .qs     ()
++  );
++
++  // Subregister 2 of Multireg op_b
++  // R[op_b_2]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_b_2 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_b_2_we),
++    .wd     (op_b_2_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_b[2].q ),
++
++    .qs     ()
++  );
++
++  // Subregister 3 of Multireg op_b
++  // R[op_b_3]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_b_3 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_b_3_we),
++    .wd     (op_b_3_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_b[3].q ),
++
++    .qs     ()
++  );
++
++  // Subregister 4 of Multireg op_b
++  // R[op_b_4]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_b_4 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_b_4_we),
++    .wd     (op_b_4_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_b[4].q ),
++
++    .qs     ()
++  );
++
++  // Subregister 5 of Multireg op_b
++  // R[op_b_5]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_b_5 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_b_5_we),
++    .wd     (op_b_5_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_b[5].q ),
++
++    .qs     ()
++  );
++
++  // Subregister 6 of Multireg op_b
++  // R[op_b_6]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_b_6 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_b_6_we),
++    .wd     (op_b_6_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_b[6].q ),
++
++    .qs     ()
++  );
++
++  // Subregister 7 of Multireg op_b
++  // R[op_b_7]: V(False)
++
++  prim_subreg #(
++    .DW      (32),
++    .SWACCESS("WO"),
++    .RESVAL  (32'h0)
++  ) u_op_b_7 (
++    .clk_i   (clk_i    ),
++    .rst_ni  (rst_ni  ),
++
++    // from register interface
++    .we     (op_b_7_we),
++    .wd     (op_b_7_wd),
++
++    // from internal hardware
++    .de     (1'b0),
++    .d      ('0  ),
++
++    // to internal hardware
++    .qe     (),
++    .q      (reg2hw.op_b[7].q ),
++
++    .qs     ()
++  );
++
++
++
++  // Subregister 0 of Multireg result
++  // R[result_0]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_0 (
++    .re     (result_0_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[0].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_0_qs)
++  );
++
++  // Subregister 1 of Multireg result
++  // R[result_1]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_1 (
++    .re     (result_1_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[1].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_1_qs)
++  );
++
++  // Subregister 2 of Multireg result
++  // R[result_2]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_2 (
++    .re     (result_2_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[2].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_2_qs)
++  );
++
++  // Subregister 3 of Multireg result
++  // R[result_3]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_3 (
++    .re     (result_3_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[3].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_3_qs)
++  );
++
++  // Subregister 4 of Multireg result
++  // R[result_4]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_4 (
++    .re     (result_4_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[4].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_4_qs)
++  );
++
++  // Subregister 5 of Multireg result
++  // R[result_5]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_5 (
++    .re     (result_5_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[5].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_5_qs)
++  );
++
++  // Subregister 6 of Multireg result
++  // R[result_6]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_6 (
++    .re     (result_6_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[6].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_6_qs)
++  );
++
++  // Subregister 7 of Multireg result
++  // R[result_7]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_7 (
++    .re     (result_7_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[7].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_7_qs)
++  );
++
++  // Subregister 8 of Multireg result
++  // R[result_8]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_8 (
++    .re     (result_8_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[8].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_8_qs)
++  );
++
++  // Subregister 9 of Multireg result
++  // R[result_9]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_9 (
++    .re     (result_9_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[9].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_9_qs)
++  );
++
++  // Subregister 10 of Multireg result
++  // R[result_10]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_10 (
++    .re     (result_10_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[10].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_10_qs)
++  );
++
++  // Subregister 11 of Multireg result
++  // R[result_11]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_11 (
++    .re     (result_11_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[11].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_11_qs)
++  );
++
++  // Subregister 12 of Multireg result
++  // R[result_12]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_12 (
++    .re     (result_12_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[12].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_12_qs)
++  );
++
++  // Subregister 13 of Multireg result
++  // R[result_13]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_13 (
++    .re     (result_13_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[13].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_13_qs)
++  );
++
++  // Subregister 14 of Multireg result
++  // R[result_14]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_14 (
++    .re     (result_14_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[14].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_14_qs)
++  );
++
++  // Subregister 15 of Multireg result
++  // R[result_15]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (32)
++  ) u_result_15 (
++    .re     (result_15_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.result[15].d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (result_15_qs)
++  );
++
++
++  // R[ctrl1]: V(True)
++
++  //   F[trigger]: 0:0
++  prim_subreg_ext #(
++    .DW    (1)
++  ) u_ctrl1_trigger (
++    .re     (1'b0),
++    .we     (ctrl1_trigger_we),
++    .wd     (ctrl1_trigger_wd),
++    .d      ('0),
++    .qre    (),
++    .qe     (reg2hw.ctrl1.trigger.qe),
++    .q      (reg2hw.ctrl1.trigger.q ),
++    .qs     ()
++  );
++
++
++  //   F[clear_err]: 1:1
++  prim_subreg_ext #(
++    .DW    (1)
++  ) u_ctrl1_clear_err (
++    .re     (1'b0),
++    .we     (ctrl1_clear_err_we),
++    .wd     (ctrl1_clear_err_wd),
++    .d      ('0),
++    .qre    (),
++    .qe     (reg2hw.ctrl1.clear_err.qe),
++    .q      (reg2hw.ctrl1.clear_err.q ),
++    .qs     ()
++  );
++
++
++  // R[ctrl2]: V(True)
++
++  //   F[opsel]: 2:0
++  prim_subreg_ext #(
++    .DW    (3)
++  ) u_ctrl2_opsel (
++    .re     (ctrl2_opsel_re),
++    .we     (ctrl2_opsel_we),
++    .wd     (ctrl2_opsel_wd),
++    .d      (hw2reg.ctrl2.opsel.d),
++    .qre    (),
++    .qe     (reg2hw.ctrl2.opsel.qe),
++    .q      (reg2hw.ctrl2.opsel.q ),
++    .qs     (ctrl2_opsel_qs)
++  );
++
++
++  //   F[delay]: 23:16
++  prim_subreg_ext #(
++    .DW    (8)
++  ) u_ctrl2_delay (
++    .re     (ctrl2_delay_re),
++    .we     (ctrl2_delay_we),
++    .wd     (ctrl2_delay_wd),
++    .d      (hw2reg.ctrl2.delay.d),
++    .qre    (),
++    .qe     (reg2hw.ctrl2.delay.qe),
++    .q      (reg2hw.ctrl2.delay.q ),
++    .qs     (ctrl2_delay_qs)
++  );
++
++
++  // R[status]: V(True)
++
++  prim_subreg_ext #(
++    .DW    (2)
++  ) u_status (
++    .re     (status_re),
++    .we     (1'b0),
++    .wd     ('0),
++    .d      (hw2reg.status.d),
++    .qre    (),
++    .qe     (),
++    .q      (),
++    .qs     (status_qs)
++  );
++
++
++
++
++  logic [34:0] addr_hit;
++  always_comb begin
++    addr_hit = '0;
++    addr_hit[ 0] = (reg_addr == WIDE_ALU_OP_A_0_OFFSET);
++    addr_hit[ 1] = (reg_addr == WIDE_ALU_OP_A_1_OFFSET);
++    addr_hit[ 2] = (reg_addr == WIDE_ALU_OP_A_2_OFFSET);
++    addr_hit[ 3] = (reg_addr == WIDE_ALU_OP_A_3_OFFSET);
++    addr_hit[ 4] = (reg_addr == WIDE_ALU_OP_A_4_OFFSET);
++    addr_hit[ 5] = (reg_addr == WIDE_ALU_OP_A_5_OFFSET);
++    addr_hit[ 6] = (reg_addr == WIDE_ALU_OP_A_6_OFFSET);
++    addr_hit[ 7] = (reg_addr == WIDE_ALU_OP_A_7_OFFSET);
++    addr_hit[ 8] = (reg_addr == WIDE_ALU_OP_B_0_OFFSET);
++    addr_hit[ 9] = (reg_addr == WIDE_ALU_OP_B_1_OFFSET);
++    addr_hit[10] = (reg_addr == WIDE_ALU_OP_B_2_OFFSET);
++    addr_hit[11] = (reg_addr == WIDE_ALU_OP_B_3_OFFSET);
++    addr_hit[12] = (reg_addr == WIDE_ALU_OP_B_4_OFFSET);
++    addr_hit[13] = (reg_addr == WIDE_ALU_OP_B_5_OFFSET);
++    addr_hit[14] = (reg_addr == WIDE_ALU_OP_B_6_OFFSET);
++    addr_hit[15] = (reg_addr == WIDE_ALU_OP_B_7_OFFSET);
++    addr_hit[16] = (reg_addr == WIDE_ALU_RESULT_0_OFFSET);
++    addr_hit[17] = (reg_addr == WIDE_ALU_RESULT_1_OFFSET);
++    addr_hit[18] = (reg_addr == WIDE_ALU_RESULT_2_OFFSET);
++    addr_hit[19] = (reg_addr == WIDE_ALU_RESULT_3_OFFSET);
++    addr_hit[20] = (reg_addr == WIDE_ALU_RESULT_4_OFFSET);
++    addr_hit[21] = (reg_addr == WIDE_ALU_RESULT_5_OFFSET);
++    addr_hit[22] = (reg_addr == WIDE_ALU_RESULT_6_OFFSET);
++    addr_hit[23] = (reg_addr == WIDE_ALU_RESULT_7_OFFSET);
++    addr_hit[24] = (reg_addr == WIDE_ALU_RESULT_8_OFFSET);
++    addr_hit[25] = (reg_addr == WIDE_ALU_RESULT_9_OFFSET);
++    addr_hit[26] = (reg_addr == WIDE_ALU_RESULT_10_OFFSET);
++    addr_hit[27] = (reg_addr == WIDE_ALU_RESULT_11_OFFSET);
++    addr_hit[28] = (reg_addr == WIDE_ALU_RESULT_12_OFFSET);
++    addr_hit[29] = (reg_addr == WIDE_ALU_RESULT_13_OFFSET);
++    addr_hit[30] = (reg_addr == WIDE_ALU_RESULT_14_OFFSET);
++    addr_hit[31] = (reg_addr == WIDE_ALU_RESULT_15_OFFSET);
++    addr_hit[32] = (reg_addr == WIDE_ALU_CTRL1_OFFSET);
++    addr_hit[33] = (reg_addr == WIDE_ALU_CTRL2_OFFSET);
++    addr_hit[34] = (reg_addr == WIDE_ALU_STATUS_OFFSET);
++  end
++
++  assign addrmiss = (reg_re || reg_we) ? ~|addr_hit : 1'b0 ;
++
++  // Check sub-word write is permitted
++  always_comb begin
++    wr_err = (reg_we &
++              ((addr_hit[ 0] & (|(WIDE_ALU_PERMIT[ 0] & ~reg_be))) |
++               (addr_hit[ 1] & (|(WIDE_ALU_PERMIT[ 1] & ~reg_be))) |
++               (addr_hit[ 2] & (|(WIDE_ALU_PERMIT[ 2] & ~reg_be))) |
++               (addr_hit[ 3] & (|(WIDE_ALU_PERMIT[ 3] & ~reg_be))) |
++               (addr_hit[ 4] & (|(WIDE_ALU_PERMIT[ 4] & ~reg_be))) |
++               (addr_hit[ 5] & (|(WIDE_ALU_PERMIT[ 5] & ~reg_be))) |
++               (addr_hit[ 6] & (|(WIDE_ALU_PERMIT[ 6] & ~reg_be))) |
++               (addr_hit[ 7] & (|(WIDE_ALU_PERMIT[ 7] & ~reg_be))) |
++               (addr_hit[ 8] & (|(WIDE_ALU_PERMIT[ 8] & ~reg_be))) |
++               (addr_hit[ 9] & (|(WIDE_ALU_PERMIT[ 9] & ~reg_be))) |
++               (addr_hit[10] & (|(WIDE_ALU_PERMIT[10] & ~reg_be))) |
++               (addr_hit[11] & (|(WIDE_ALU_PERMIT[11] & ~reg_be))) |
++               (addr_hit[12] & (|(WIDE_ALU_PERMIT[12] & ~reg_be))) |
++               (addr_hit[13] & (|(WIDE_ALU_PERMIT[13] & ~reg_be))) |
++               (addr_hit[14] & (|(WIDE_ALU_PERMIT[14] & ~reg_be))) |
++               (addr_hit[15] & (|(WIDE_ALU_PERMIT[15] & ~reg_be))) |
++               (addr_hit[16] & (|(WIDE_ALU_PERMIT[16] & ~reg_be))) |
++               (addr_hit[17] & (|(WIDE_ALU_PERMIT[17] & ~reg_be))) |
++               (addr_hit[18] & (|(WIDE_ALU_PERMIT[18] & ~reg_be))) |
++               (addr_hit[19] & (|(WIDE_ALU_PERMIT[19] & ~reg_be))) |
++               (addr_hit[20] & (|(WIDE_ALU_PERMIT[20] & ~reg_be))) |
++               (addr_hit[21] & (|(WIDE_ALU_PERMIT[21] & ~reg_be))) |
++               (addr_hit[22] & (|(WIDE_ALU_PERMIT[22] & ~reg_be))) |
++               (addr_hit[23] & (|(WIDE_ALU_PERMIT[23] & ~reg_be))) |
++               (addr_hit[24] & (|(WIDE_ALU_PERMIT[24] & ~reg_be))) |
++               (addr_hit[25] & (|(WIDE_ALU_PERMIT[25] & ~reg_be))) |
++               (addr_hit[26] & (|(WIDE_ALU_PERMIT[26] & ~reg_be))) |
++               (addr_hit[27] & (|(WIDE_ALU_PERMIT[27] & ~reg_be))) |
++               (addr_hit[28] & (|(WIDE_ALU_PERMIT[28] & ~reg_be))) |
++               (addr_hit[29] & (|(WIDE_ALU_PERMIT[29] & ~reg_be))) |
++               (addr_hit[30] & (|(WIDE_ALU_PERMIT[30] & ~reg_be))) |
++               (addr_hit[31] & (|(WIDE_ALU_PERMIT[31] & ~reg_be))) |
++               (addr_hit[32] & (|(WIDE_ALU_PERMIT[32] & ~reg_be))) |
++               (addr_hit[33] & (|(WIDE_ALU_PERMIT[33] & ~reg_be))) |
++               (addr_hit[34] & (|(WIDE_ALU_PERMIT[34] & ~reg_be)))));
++  end
++
++  assign op_a_0_we = addr_hit[0] & reg_we & !reg_error;
++  assign op_a_0_wd = reg_wdata[31:0];
++
++  assign op_a_1_we = addr_hit[1] & reg_we & !reg_error;
++  assign op_a_1_wd = reg_wdata[31:0];
++
++  assign op_a_2_we = addr_hit[2] & reg_we & !reg_error;
++  assign op_a_2_wd = reg_wdata[31:0];
++
++  assign op_a_3_we = addr_hit[3] & reg_we & !reg_error;
++  assign op_a_3_wd = reg_wdata[31:0];
++
++  assign op_a_4_we = addr_hit[4] & reg_we & !reg_error;
++  assign op_a_4_wd = reg_wdata[31:0];
++
++  assign op_a_5_we = addr_hit[5] & reg_we & !reg_error;
++  assign op_a_5_wd = reg_wdata[31:0];
++
++  assign op_a_6_we = addr_hit[6] & reg_we & !reg_error;
++  assign op_a_6_wd = reg_wdata[31:0];
++
++  assign op_a_7_we = addr_hit[7] & reg_we & !reg_error;
++  assign op_a_7_wd = reg_wdata[31:0];
++
++  assign op_b_0_we = addr_hit[8] & reg_we & !reg_error;
++  assign op_b_0_wd = reg_wdata[31:0];
++
++  assign op_b_1_we = addr_hit[9] & reg_we & !reg_error;
++  assign op_b_1_wd = reg_wdata[31:0];
++
++  assign op_b_2_we = addr_hit[10] & reg_we & !reg_error;
++  assign op_b_2_wd = reg_wdata[31:0];
++
++  assign op_b_3_we = addr_hit[11] & reg_we & !reg_error;
++  assign op_b_3_wd = reg_wdata[31:0];
++
++  assign op_b_4_we = addr_hit[12] & reg_we & !reg_error;
++  assign op_b_4_wd = reg_wdata[31:0];
++
++  assign op_b_5_we = addr_hit[13] & reg_we & !reg_error;
++  assign op_b_5_wd = reg_wdata[31:0];
++
++  assign op_b_6_we = addr_hit[14] & reg_we & !reg_error;
++  assign op_b_6_wd = reg_wdata[31:0];
++
++  assign op_b_7_we = addr_hit[15] & reg_we & !reg_error;
++  assign op_b_7_wd = reg_wdata[31:0];
++
++  assign result_0_re = addr_hit[16] & reg_re & !reg_error;
++
++  assign result_1_re = addr_hit[17] & reg_re & !reg_error;
++
++  assign result_2_re = addr_hit[18] & reg_re & !reg_error;
++
++  assign result_3_re = addr_hit[19] & reg_re & !reg_error;
++
++  assign result_4_re = addr_hit[20] & reg_re & !reg_error;
++
++  assign result_5_re = addr_hit[21] & reg_re & !reg_error;
++
++  assign result_6_re = addr_hit[22] & reg_re & !reg_error;
++
++  assign result_7_re = addr_hit[23] & reg_re & !reg_error;
++
++  assign result_8_re = addr_hit[24] & reg_re & !reg_error;
++
++  assign result_9_re = addr_hit[25] & reg_re & !reg_error;
++
++  assign result_10_re = addr_hit[26] & reg_re & !reg_error;
++
++  assign result_11_re = addr_hit[27] & reg_re & !reg_error;
++
++  assign result_12_re = addr_hit[28] & reg_re & !reg_error;
++
++  assign result_13_re = addr_hit[29] & reg_re & !reg_error;
++
++  assign result_14_re = addr_hit[30] & reg_re & !reg_error;
++
++  assign result_15_re = addr_hit[31] & reg_re & !reg_error;
++
++  assign ctrl1_trigger_we = addr_hit[32] & reg_we & !reg_error;
++  assign ctrl1_trigger_wd = reg_wdata[0];
++
++  assign ctrl1_clear_err_we = addr_hit[32] & reg_we & !reg_error;
++  assign ctrl1_clear_err_wd = reg_wdata[1];
++
++  assign ctrl2_opsel_we = addr_hit[33] & reg_we & !reg_error;
++  assign ctrl2_opsel_wd = reg_wdata[2:0];
++  assign ctrl2_opsel_re = addr_hit[33] & reg_re & !reg_error;
++
++  assign ctrl2_delay_we = addr_hit[33] & reg_we & !reg_error;
++  assign ctrl2_delay_wd = reg_wdata[23:16];
++  assign ctrl2_delay_re = addr_hit[33] & reg_re & !reg_error;
++
++  assign status_re = addr_hit[34] & reg_re & !reg_error;
++
++  // Read data return
++  always_comb begin
++    reg_rdata_next = '0;
++    unique case (1'b1)
++      addr_hit[0]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[1]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[2]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[3]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[4]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[5]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[6]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[7]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[8]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[9]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[10]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[11]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[12]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[13]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[14]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[15]: begin
++        reg_rdata_next[31:0] = '0;
++      end
++
++      addr_hit[16]: begin
++        reg_rdata_next[31:0] = result_0_qs;
++      end
++
++      addr_hit[17]: begin
++        reg_rdata_next[31:0] = result_1_qs;
++      end
++
++      addr_hit[18]: begin
++        reg_rdata_next[31:0] = result_2_qs;
++      end
++
++      addr_hit[19]: begin
++        reg_rdata_next[31:0] = result_3_qs;
++      end
++
++      addr_hit[20]: begin
++        reg_rdata_next[31:0] = result_4_qs;
++      end
++
++      addr_hit[21]: begin
++        reg_rdata_next[31:0] = result_5_qs;
++      end
++
++      addr_hit[22]: begin
++        reg_rdata_next[31:0] = result_6_qs;
++      end
++
++      addr_hit[23]: begin
++        reg_rdata_next[31:0] = result_7_qs;
++      end
++
++      addr_hit[24]: begin
++        reg_rdata_next[31:0] = result_8_qs;
++      end
++
++      addr_hit[25]: begin
++        reg_rdata_next[31:0] = result_9_qs;
++      end
++
++      addr_hit[26]: begin
++        reg_rdata_next[31:0] = result_10_qs;
++      end
++
++      addr_hit[27]: begin
++        reg_rdata_next[31:0] = result_11_qs;
++      end
++
++      addr_hit[28]: begin
++        reg_rdata_next[31:0] = result_12_qs;
++      end
++
++      addr_hit[29]: begin
++        reg_rdata_next[31:0] = result_13_qs;
++      end
++
++      addr_hit[30]: begin
++        reg_rdata_next[31:0] = result_14_qs;
++      end
++
++      addr_hit[31]: begin
++        reg_rdata_next[31:0] = result_15_qs;
++      end
++
++      addr_hit[32]: begin
++        reg_rdata_next[0] = '0;
++        reg_rdata_next[1] = '0;
++      end
++
++      addr_hit[33]: begin
++        reg_rdata_next[2:0] = ctrl2_opsel_qs;
++        reg_rdata_next[23:16] = ctrl2_delay_qs;
++      end
++
++      addr_hit[34]: begin
++        reg_rdata_next[1:0] = status_qs;
++      end
++
++      default: begin
++        reg_rdata_next = '1;
++      end
++    endcase
++  end
++
++  // Unused signal tieoff
++
++  // wdata / byte enable are not always fully used
++  // add a blanket unused statement to handle lint waivers
++  logic unused_wdata;
++  logic unused_be;
++  assign unused_wdata = ^reg_wdata;
++  assign unused_be = ^reg_be;
++
++  // Assertions for Register Interface
++  `ASSERT(en2addrHit, (reg_we || reg_re) |-> $onehot0(addr_hit))
++
++endmodule
+diff --git a/wide_alu_top.sv b/wide_alu_top.sv
+new file mode 100644
+index 0000000..fd9e771
+--- /dev/null
++++ b/wide_alu_top.sv
+@@ -0,0 +1,96 @@
++//-----------------------------------------------------------------------------
++// Title         : Wide-ALU Sample IP for PULP-Training IP Integration Exercise
++//-----------------------------------------------------------------------------
++// File          : wide_alu.sv
++// Author        : Manuel Eggimann  <meggimann@iis.ee.ethz.ch>
++// Created       : 17.11.2020
++//-----------------------------------------------------------------------------
++// Description :
++//
++//-----------------------------------------------------------------------------
++// Copyright (C) 2013-2020 ETH Zurich, University of Bologna
++// Copyright and related rights are licensed under the Solderpad Hardware
++// License, Version 0.51 (the "License"); you may not use this file except in
++// compliance with the License. You may obtain a copy of the License at
++// http://solderpad.org/licenses/SHL-0.51. Unless required by applicable law
++// or agreed to in writing, software, hardware and materials distributed under
++// this License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
++// CONDITIONS OF ANY KIND, either express or implied. See the License for the
++// specific language governing permissions and limitations under the License.
++//-----------------------------------------------------------------------------
++
++module wide_alu_top
++    import wide_alu_pkg::*;
++    import wide_alu_reg_pkg::*;
++    #(
++      localparam ALU_WIDTH=256,
++      localparam DEACCEL_COUNTER_WIDTH = 8,
++      parameter type reg_req_t = logic,
++      parameter type reg_rsp_t = logic
++    )(
++     input logic                              clk_i,
++     input logic                              rst_ni,
++     input  reg_req_t                         reg_req_i,
++     output reg_rsp_t                         reg_rsp_o
++     );
++
++    wide_alu_reg_pkg::wide_alu_reg2hw_t reg2hw;
++    wide_alu_reg_pkg::wide_alu_hw2reg_t hw2reg;
++    
++    wide_alu_reg_top #(
++     .reg_req_t(reg_req_t),
++     .reg_rsp_t(reg_rsp_t)
++       ) i_wide_alu_regs (
++            .clk_i  (clk_i),
++            .rst_ni (rst_ni),
++            .reg_req_i(reg_req_i),
++            .reg_rsp_o(reg_rsp_o),
++            .reg2hw(reg2hw),
++            .hw2reg(hw2reg),
++            .devmode_i(1'b1)
++       );
++
++    wide_alu_pkg::optype_e reg2hwop;
++
++    always_comb begin
++      reg2hwop = ADD;
++      case(reg2hw.ctrl2.opsel.q)
++        3'h0: begin
++           reg2hwop = ADD;
++        end
++        3'h1: begin
++           reg2hwop = SUB;
++        end
++        3'h2: begin
++           reg2hwop = MUL;
++        end
++        3'h3: begin
++           reg2hwop = XOR;
++        end
++        3'h4: begin
++           reg2hwop = AND;
++        end
++        3'h5: begin
++           reg2hwop = OR;
++        end
++      endcase
++    end 
++   
++    wide_alu i_wide_alu(
++                        .clk_i(clk_i),
++                        .rst_ni(rst_ni),
++                        .trigger_i(reg2hw.ctrl1.trigger.q & reg2hw.ctrl1.trigger.qe),
++                        .clear_err_i(reg2hw.ctrl1.clear_err.q & reg2hw.ctrl1.clear_err.qe),
++                        .op_a_i(reg2hw.op_a),
++                        .op_b_i(reg2hw.op_b),
++                        .result_o(hw2reg.result),
++                        .deaccel_factor_we_i(reg2hw.ctrl2.delay.qe),
++                        .deaccel_factor_i(reg2hw.ctrl2.delay.q),
++                        .deaccel_factor_o(hw2reg.ctrl2.delay.d),
++                        .op_sel_we_i(reg2hw.ctrl2.opsel.qe),
++                        .op_sel_i(reg2hwop),
++                        .op_sel_o(hw2reg.ctrl2.opsel.d),
++                        .status_o(hw2reg.status.d)
++                        );
++   
++endmodule : wide_alu_top

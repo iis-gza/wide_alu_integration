@@ -1,0 +1,3 @@
+[submodule "register_interface"]
+	path = register_interface
+	url = https://github.com/pulp-platform/register_interface.git
