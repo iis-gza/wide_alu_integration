@@ -14,28 +14,31 @@
  * limitations under the License.
  */
 
-#include <stdio.h>
-#include "pulp.h"
+#include "pmsis.h"
+#include "string.h"
 
 int main()
 {
-    printf("Hello World!\n");
+  uint32_t a[8];
+  uint32_t b[8];
+  uint32_t result[16];
 
-    uint32_t a[32];
-    uint32_t b[32];
-    uint32_t result[64];
+  memset(a, 0, sizeof (a));
+  memset(b, 0, sizeof (b));
+  memset(result, 0, sizeof (result));
 
-    memset(a, 0, sizeof (a));
-    memset(b, 0, sizeof (b));
-    memset(result, 0, sizeof (result));
+  a[0] = 3;
+  b[0] = 5;
+  set_delay(50);
 
-    a[0] = 3;
-    b[0] = 5;
-    set_delay(50);
-
-    wide_multiply(a, b, result);
-
-    printf("Result [0]: %d\n", result[0]);
-
+  if((wide_multiply(a, b, result) != 0) || (result[0] != 15))
+  {
+    printf("ERROR\n");
+    return -1;
+  }
+  else
+  {
+    printf("SUCCESS\n");
     return 0;
+  }
 }

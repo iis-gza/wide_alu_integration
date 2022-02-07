@@ -222,34 +222,26 @@ memory.
 Now that we are done integrating the IP into the HW, lets write a small driver
 to actually use it without hardcoding register addresses ourselves.
 
-You are given an unfinished driver. You need to integrate it into pulp-runtime
+You are given an unfinished driver. You need to integrate it into pulp-sdk
 and complete the implementation. If you do everything correctly, running the
-given example program (`main.c`) should return the 15 (the multiplication of 3
-and 5 being done in the accelerator)
+given example program (`test.c`) should return `SUCCESS`
 
 You are given the following files
-- `wide_alu_driver.c`: contains partial implementation of the wide_alu driver
-- `wide_alu_driver.h`: contains the header file for the partial implementaiton
+- `wide_alu_v1_hal.c`: contains partial implementation of the wide_alu driver
+- `wide_alu_v1_archi.h`: contains the header file for the partial implementaiton
   of the wide_alu driver
-
 
 Follow these steps
 
-1. Integrate the given put the driver into pulp-runtime by
-   - Moving the header file in `pulp-runtime/include`
-   - Moving the implementation file into `pulp-runtime/driver`
-   - Patching up `pulpissimo.mk` and `include/pulp.h`
+1. Integrate the given put the driver into pulp-sdk by
+   - Moving the header file in `pulp-sdk/rtos/pulpos/pulp_archi/include/archi/wide_alu/`
+   - Moving the implementation file into `pulp-sdk/rtos/pulpos/pulp_hal/include/hal/wide_alu/`
+   - Patching up `properties.h`, `memory_map.h` and `include/pulp.h` in both HAL locations
 
-2. Use `wide_alu.hjson` with `regtool.py`to generate the c header
-file and integrate it into pulp-runtime
-
-2. Finish the driver implementation and get the `main.c` program to print the
+2. Finish the driver implementation and get the `test.c` program to print the
    correct result. In order to do that you are required to implement the
    following functions.
-   - `void set_op(uint8_t operation)`
-   - `void trigger_op(void)`
-   - `int wide_multiply(uint32_t a[32], uint32_t b[32], uint32_t result[64])`
-   Before you start, study `main.c`, the already given driver files and your
-   auto-generated header file.
+   - `int wide_multiply(uint32_t *a, uint32_t *b, uint32_t *result)`
+   Before you start, study `test.c`, the already given driver files and header file.
 
-   When you run `main.c` it should print `15` to stdout.
+   When you run `test.c` it should print `SUCCESS` to stdout.
