@@ -1,0 +1,14 @@
+package:
+  name: wide_alu_integration
+  authors:
+    - "Fabio Garzia"
+
+dependencies:
+  register_interface:     { git: "https://github.com/pulp-platform/register_interface.git", version: 0.3.1 }
+
+sources:
+  - rtl/wide_alu_reg_pkg.sv
+  - rtl/wide_alu_reg_top.sv
+  - wide_alu_pkg.sv
+  - wide_alu.sv
+  - wide_alu_top.sv
